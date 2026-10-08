@@ -1,0 +1,10 @@
+{
+  "chainId": 11155111,
+  "address": "0x460cb21739f1cd73cf1de5d8a3337b1f6d86cae3",
+  "transactionHash": "0x8918493443df4517f20c814e53d3b4d3795f168bbccd8f7160d431a8bf59f2c8",
+  "blockNumber": 11868216,
+  "token": "0xc353a90e666E2C70279DC692FeEE7CB15AA8cB83",
+  "authorizer": "0xb3718826d7C66d497Cc332b8eA468680e5A50c37",
+  "initialReserveArca": "500",
+  "deploymentGasFeeEth": "0.00000436684150164"
+}
