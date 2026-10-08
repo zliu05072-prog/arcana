@@ -1,5 +1,5 @@
 import {verifyMessage,keccak256,toUtf8Bytes} from 'ethers';
-import {database,readLedger,readAccount,transact,positive,rewardOf} from './ledger.js';
+import {database,readLedger,readAccount,transact,positive,flowerReward} from './ledger.js';
 import {TOKEN,OPERATOR,CHAIN,authorizer,claimTypes,domain,rpc,receipt,call,tokenInterface,vaultInterface,events,depositAmount,verifySetup,paidReceipt,deploymentQuote} from './chain.js';
 
 const PAGES_ORIGIN='https://zliu05072-prog.github.io';
@@ -23,7 +23,7 @@ async function session(db,request) {
 }
 function cookie(request,token,age) {return `arcana_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${new URL(request.url).protocol==='https:'?'; Secure':''}`;}
 async function auth(db,request){const wallet=await session(db,request);if(!wallet){const e=Error('Sign in once with your wallet to open your saved garden. No gas is charged.');e.status=401;throw e;}return wallet;}
-function publicAccount(a) {return {...a,flowers:a.flowers.map(f=>Date.now()<f.readyAt?{...f,rarity:null}:{...f,reward:rewardOf(f.tier,f.rarity).toString()})};}
+function publicAccount(a) {return {...a,flowers:a.flowers.map(f=>Date.now()<f.readyAt?{...f,rarity:null}:{...f,reward:flowerReward(f).toString()})};}
 async function route(request,env) {
   const url=new URL(request.url),path=url.pathname,db=database(env);
   if(request.method==='GET'&&path==='/api/state') {
@@ -84,6 +84,7 @@ async function route(request,env) {
     const prior=await db.prepare('SELECT fingerprint,result FROM operations WHERE id = ?').bind(id).first();
     if(prior){if(prior.fingerprint!==fingerprint)throw Error('Request ID conflict.');return json(JSON.parse(prior.result));}
     let event;
+    if(path==='/api/grow'&&body.economyVersion!==2)throw Object.assign(Error('Potion prices have changed. Refresh the page before planting; no ARCA was spent.'),{unchanged:true});
     if(path==='/api/grow')event={kind:'grow',id:hexRandom(16),species:body.species,tier:body.tier,infusion:body.infusion,roll:randomRoll()};
     if(path==='/api/sell')event={kind:'sell',id:body.id};
     if(path==='/api/withdraw'){positive(body.amount);authorizer(env);event={kind:'withdraw',amount:body.amount,nonce:hexRandom(),deadline:Math.floor(Date.now()/1000)+600};}

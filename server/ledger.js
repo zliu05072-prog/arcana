@@ -1,10 +1,14 @@
+import {GAME_POTIONS,SALE_PRICES,ECONOMY_VERSION,drawRarity} from '../src/potion-economy.js';
 // Money is always integer token wei, serialized as decimal strings. No floats.
 export const UNIT = 10n ** 18n;
 export const emptyLedger = () => ({vault:null,backing:'0',credits:'0',pending:'0',reserved:'0',fees:'0'});
 export const emptyAccount = () => ({balance:'0',flowers:[],withdrawals:[],history:[]});
-export const costOf = tier => BigInt(60 * 2 ** tier) * UNIT;
+export const costOf = tier => BigInt(GAME_POTIONS[tier].price) * UNIT;
 export const rewardOf = (tier, rarity) => BigInt([40,60,150,400][rarity] * 2 ** tier) * UNIT;
-export function rarityOf(roll) { if(!Number.isInteger(roll)||roll<0||roll>=10000)throw Error('Invalid random draw'); return roll<7500?0:roll<9500?1:roll<9900?2:3; }
+export const rarityOf = drawRarity;
+// Existing flowers keep their original payout and already reserved liability.
+export const flowerReward = f => f.economyVersion===ECONOMY_VERSION ? BigInt(SALE_PRICES[f.rarity])*UNIT : rewardOf(f.tier,f.rarity);
+export const flowerReserve = f => f.economyVersion===ECONOMY_VERSION ? 400n*UNIT : rewardOf(f.tier,3);
 export function positive(value) { if(typeof value!=='string'||!/^\d{1,40}$/.test(value)||BigInt(value)<=0n)throw Error('Enter a positive ARCA amount.'); return BigInt(value); }
 const add=(o,key,value)=>o[key]=(BigInt(o[key])+value).toString();
 export function assertBacked(l) {
@@ -18,16 +22,16 @@ export function change(l,a,event,now=Date.now()) {
   else if(e.kind==='reserve') { add(l,'backing',positive(e.amount));result.amount=e.amount; }
   else if(e.kind==='setup') { if(l.vault)throw Error('Settlement vault already registered.');l.vault=e.vault;add(l,'backing',BigInt(e.amount));result.vault=e.vault; }
   else if(e.kind==='grow') {
-    for(const [value,max] of [[e.species,4],[e.tier,3],[e.infusion,2]])if(!Number.isInteger(value)||value<0||value>max)throw Error('Choose a valid seed and potion.');
+    for(const [value,max] of [[e.species,4],[e.tier,2],[e.infusion,2]])if(!Number.isInteger(value)||value<0||value>max)throw Error('Choose a valid seed and potion.');
     if(a.flowers.filter(f=>!f.sold).length>=100)throw Error('Sell some flowers before planting more.');
     const cost=costOf(e.tier);if(BigInt(a.balance)<cost)throw Error('Not enough game ARCA. Deposit existing wallet ARCA or choose a smaller potion.');
-    add(a,'balance',-cost);add(l,'credits',-cost);add(l,'fees',cost/10n);add(l,'reserved',rewardOf(e.tier,3));
-    const f={id:e.id,species:e.species,tier:e.tier,infusion:e.infusion,rarity:rarityOf(e.roll),created:at,readyAt:at+9000,sold:false};
+    add(a,'balance',-cost);add(l,'credits',-cost);add(l,'fees',cost/10n);add(l,'reserved',400n*UNIT);
+    const f={id:e.id,species:e.species,tier:e.tier,infusion:e.infusion,rarity:rarityOf(e.roll,e.tier),economyVersion:ECONOMY_VERSION,created:at,readyAt:at+9000,sold:false};
     a.flowers=a.flowers.filter(f=>!f.sold).concat(a.flowers.filter(f=>f.sold).slice(-50),f);
     result={...result,id:e.id,amount:cost.toString()};
   } else if(e.kind==='sell') {
     const f=a.flowers.find(f=>f.id===e.id);if(!f||f.sold)throw Error('This flower was already sold or is unavailable.');if(f.readyAt>at)throw Error('Your flower is still growing.');
-    const reward=rewardOf(f.tier,f.rarity);f.sold=true;f.soldAt=at;add(a,'balance',reward);add(l,'credits',reward);add(l,'reserved',-rewardOf(f.tier,3));result={...result,id:f.id,amount:reward.toString()};
+    const reward=flowerReward(f);f.sold=true;f.soldAt=at;add(a,'balance',reward);add(l,'credits',reward);add(l,'reserved',-flowerReserve(f));result={...result,id:f.id,amount:reward.toString()};
   } else if(e.kind==='withdraw') {
     if(a.withdrawals.some(w=>w.status==='pending'))throw Error('Finish or recover your pending withdrawal first.');
     const n=positive(e.amount);if(n>BigInt(a.balance))throw Error('Withdrawal exceeds your game balance.');
