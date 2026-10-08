@@ -1,4 +1,4 @@
-import {Interface, keccak256, Wallet} from 'ethers';
+import {Interface, keccak256, Wallet, ContractFactory} from 'ethers';
 import artifact from '../src/vault-contract.json' with {type:'json'};
 export const TOKEN='0xc353a90e666e2c70279dc692feee7cb15aa8cb83';
 export const OPERATOR='0x962189caf0c97bd530611818b96dc54242428a33';
@@ -46,6 +46,24 @@ export async function verifySetup(env,address,hash) {
   if(r.contractAddress?.toLowerCase()!==address)throw Error('Provide this vault’s deployment transaction.');
   const amount=events(r,address,vaultInterface,'ReserveFunded').reduce((n,e)=>n+e.amount,0n).toString();
   return {amount,block:Number(r.blockNumber)};
+}
+export function budgetDeployment({balance,gas,baseFee,priority,gasPrice,value}) {
+  const gasLimit=(BigInt(gas)*12n+9n)/10n;
+  const maxPriorityFeePerGas=BigInt(priority);
+  const proposed=BigInt(baseFee)*2n+maxPriorityFeePerGas;
+  const maxFeePerGas=proposed>BigInt(gasPrice)*2n?proposed:BigInt(gasPrice)*2n;
+  const maximumNetworkFee=gasLimit*maxFeePerGas,total=BigInt(value)+maximumNetworkFee;
+  return {gasLimit:gasLimit.toString(),maxPriorityFeePerGas:maxPriorityFeePerGas.toString(),maxFeePerGas:maxFeePerGas.toString(),maximumNetworkFee:maximumNetworkFee.toString(),total:total.toString(),balance:BigInt(balance).toString(),sufficient:BigInt(balance)>=total};
+}
+export async function deploymentQuote(env,value) {
+  if(value<100000000000000n||value>100000000000000000n)throw Error('Choose 0.0001 to 0.1 Sepolia ETH for reserves.');
+  const tx=await new ContractFactory(artifact.abi,artifact.bytecode).getDeployTransaction(TOKEN,authorizer(env).address,{value});
+  const [balance,gas,head,priority,gasPrice,chain]=await Promise.all([
+    rpc(env,'eth_getBalance',[OPERATOR,'latest']),rpc(env,'eth_estimateGas',[{from:OPERATOR,data:tx.data,value:'0x'+value.toString(16)}]),
+    rpc(env,'eth_getBlockByNumber',['latest',false]),rpc(env,'eth_maxPriorityFeePerGas'),rpc(env,'eth_gasPrice'),rpc(env,'eth_chainId')
+  ]);
+  if(BigInt(chain)!==BigInt(CHAIN))throw Error('RPC is not on Sepolia.');
+  return {...budgetDeployment({balance,gas,baseFee:head.baseFeePerGas,priority,gasPrice,value}),value:value.toString(),block:Number(head.number)};
 }
 export async function paidReceipt(env,vault,wallet,w,hash) {
   const r=await receipt(env,hash);

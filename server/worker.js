@@ -1,6 +1,6 @@
 import {verifyMessage,keccak256,toUtf8Bytes} from 'ethers';
 import {database,readLedger,readAccount,transact,positive,rewardOf} from './ledger.js';
-import {TOKEN,OPERATOR,CHAIN,authorizer,claimTypes,domain,rpc,receipt,call,tokenInterface,vaultInterface,events,depositAmount,verifySetup,paidReceipt} from './chain.js';
+import {TOKEN,OPERATOR,CHAIN,authorizer,claimTypes,domain,rpc,receipt,call,tokenInterface,vaultInterface,events,depositAmount,verifySetup,paidReceipt,deploymentQuote} from './chain.js';
 
 const hexRandom=(n=32)=>'0x'+Array.from(crypto.getRandomValues(new Uint8Array(n)),b=>b.toString(16).padStart(2,'0')).join('');
 const hash=s=>keccak256(toUtf8Bytes(s));
@@ -49,6 +49,10 @@ async function route(request,env) {
   const wallet=await auth(db,request);await limited(db,`actions:${wallet}`,300);
   const l=(await readLedger(db)).value;
   const execute=(id,event)=>transact(db,{wallet,id,fingerprint:hash(JSON.stringify({wallet,event})),event});
+  if(path==='/api/setup/quote') {
+    if(wallet!==OPERATOR)throw Error('Operator only.');
+    return json(await deploymentQuote(env,positive(body.amount)));
+  }
   if(path==='/api/setup') {
     if(wallet!==OPERATOR)throw Error('Only the existing garden operator can activate settlement.');
     const address=walletAddress(body.address),proof=await verifySetup(env,address,body.hash);
