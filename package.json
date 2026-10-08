@@ -6,11 +6,23 @@
   "scripts": {
     "compile": "node scripts/compile.mjs",
     "dev": "vite --host 127.0.0.1",
-    "build": "node scripts/compile.mjs && vite build",
+    "build": "node scripts/compile.mjs && vite build && node scripts/build-worker.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test test/*.test.mjs",
-    "check:submission": "node scripts/check-submission.mjs"
+    "check:submission": "node scripts/check-submission.mjs",
+    "db:generate": "drizzle-kit generate",
+    "dev:full": "node scripts/dev-server.mjs"
   },
-  "dependencies": { "ethers": "6.17.0" },
-  "devDependencies": { "vite": "6.1.0", "solc": "0.8.30", "ganache": "7.9.2" }
+  "dependencies": {
+    "ethers": "6.17.0"
+  },
+  "devDependencies": {
+    "vite": "6.1.0",
+    "solc": "0.8.30",
+    "ganache": "7.9.2",
+    "esbuild": "0.25.12",
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2",
+    "wrangler": "4.92.0"
+  }
 }
