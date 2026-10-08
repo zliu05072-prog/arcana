@@ -74,7 +74,7 @@ Schema is in `db/schema.ts`. Generate append-only migrations with `pnpm db:gener
 
 ## Validation and demonstration
 
-46 tests cover retained contracts and wallet diagnostics plus new real ERC-20 deposit/payout transactions, no chain writes during gameplay, partial withdrawals, replay resistance, stolen/altered/expired vouchers, concurrent spending, insufficient reserves, rollback, login ownership, nonce replay and hidden mutations. Local tests do not prove live Sepolia completion.
+47 tests cover retained contracts and wallet diagnostics plus new real ERC-20 deposit/payout transactions, no chain writes during gameplay, partial withdrawals, replay resistance, stolen/altered/expired vouchers, concurrent spending, insufficient reserves, rollback, login ownership, nonce replay and hidden mutations. Local tests do not prove live Sepolia completion.
 
 For a seven-minute assessment: show token/vault addresses → connect and sign in → deposit (transaction 1) → choose a seed and grow with no wallet prompt → sell and show game credit → show both Continue/Withdraw choices → withdraw (transaction 2) → open the successful receipt, ARCA Transfer and wallet balance. Explain the off-chain gameplay / on-chain custody tradeoff.
 
