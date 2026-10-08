@@ -1,0 +1,24 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "SeedFund.sol": {
+      "content": "// SPDX-License-Identifier: MIT\npragma solidity 0.8.30;\n\n/// @title SeedFund - goal-based crowdfunding for the Sepolia classroom demo.\n/// @notice No admin, platform fee, upgrade mechanism, or external oracle.\ncontract SeedFund {\n    struct Campaign {\n        address creator;\n        string title;\n        string description;\n        uint256 goal;\n        uint256 deadline;\n        uint256 raised;\n        uint256 backers;\n        bool withdrawn;\n    }\n\n    Campaign[] private campaigns;\n    mapping(uint256 => mapping(address => uint256)) public contributions;\n    bool private entered;\n\n    event CampaignCreated(uint256 indexed id, address indexed creator, string title, uint256 goal, uint256 deadline);\n    event Funded(uint256 indexed id, address indexed backer, uint256 amount);\n    event Withdrawn(uint256 indexed id, address indexed creator, uint256 amount);\n    event Refunded(uint256 indexed id, address indexed backer, uint256 amount);\n\n    modifier validCampaign(uint256 id) {\n        require(id < campaigns.length, \"Campaign not found\");\n        _;\n    }\n\n    modifier nonReentrant() {\n        require(!entered, \"Reentrant call\");\n        entered = true;\n        _;\n        entered = false;\n    }\n\n    function campaignCount() external view returns (uint256) { return campaigns.length; }\n\n    function getCampaign(uint256 id) external view validCampaign(id) returns (Campaign memory) {\n        return campaigns[id];\n    }\n\n    function createCampaign(string calldata title, string calldata description, uint256 goal, uint256 durationMinutes) external returns (uint256 id) {\n        require(bytes(title).length > 0 && bytes(title).length <= 80, \"Title: 1-80 bytes\");\n        require(bytes(description).length <= 500, \"Description too long\");\n        require(goal > 0, \"Goal must be positive\");\n        require(durationMinutes >= 1 && durationMinutes <= 43200, \"Duration: 1 minute to 30 days\");\n        uint256 deadline = block.timestamp + durationMinutes * 1 minutes;\n        id = campaigns.length;\n        campaigns.push(Campaign(msg.sender, title, description, goal, deadline, 0, 0, false));\n        emit CampaignCreated(id, msg.sender, title, goal, deadline);\n    }\n\n    function fund(uint256 id) external payable validCampaign(id) {\n        Campaign storage c = campaigns[id];\n        require(block.timestamp < c.deadline, \"Campaign ended\");\n        require(!c.withdrawn && c.raised < c.goal, \"Goal already reached\");\n        require(msg.value > 0, \"Contribution must be positive\");\n        require(msg.value <= c.goal - c.raised, \"Exceeds remaining goal\");\n        if (contributions[id][msg.sender] == 0) c.backers++;\n        contributions[id][msg.sender] += msg.value;\n        c.raised += msg.value;\n        emit Funded(id, msg.sender, msg.value);\n    }\n\n    /// @notice Success is final as soon as the goal is reached; no wait is required.\n    function withdraw(uint256 id) external validCampaign(id) nonReentrant {\n        Campaign storage c = campaigns[id];\n        require(msg.sender == c.creator, \"Only creator\");\n        require(c.raised >= c.goal, \"Goal not reached\");\n        require(!c.withdrawn, \"Already withdrawn\");\n        c.withdrawn = true;\n        uint256 amount = c.raised;\n        (bool sent,) = payable(c.creator).call{value: amount}(\"\");\n        require(sent, \"Transfer failed\");\n        emit Withdrawn(id, c.creator, amount);\n    }\n\n    /// @notice Pull refunds avoid looping through or paying every backer at once.\n    function refund(uint256 id) external validCampaign(id) nonReentrant {\n        Campaign storage c = campaigns[id];\n        require(block.timestamp >= c.deadline && c.raised < c.goal, \"Refund unavailable\");\n        uint256 amount = contributions[id][msg.sender];\n        require(amount > 0, \"Nothing to refund\");\n        contributions[id][msg.sender] = 0;\n        // raised is historical gross funding, so success/failure never changes after expiry.\n        (bool sent,) = payable(msg.sender).call{value: amount}(\"\");\n        require(sent, \"Transfer failed\");\n        emit Refunded(id, msg.sender, amount);\n    }\n}\n"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "evmVersion": "shanghai",
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode.object",
+          "evm.deployedBytecode.object"
+        ]
+      }
+    }
+  }
+}
