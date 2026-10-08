@@ -25,3 +25,28 @@ const send=async tx=>(await tx).wait();
 test('real ERC20 deposit and payout are exactly two player transactions; gameplay changes no chain nonce',async()=>{await send(token.buyArca(parseEther('180'),{value:parseEther('0.0018')}));const wallet=await alice.getAddress(),address=await vault.getAddress();const nonce=await provider.send('eth_getTransactionCount',[wallet,'latest']);await send(token.transfer(address,parseEther('180')));const {l,a}=base();change(l,a,{kind:'deposit',amount:String(180n*UNIT)});change(l,a,{kind:'grow',id:'f',species:0,tier:0,infusion:0,roll:1},0);change(l,a,{kind:'sell',id:'f'},9000);assert.equal(BigInt(await provider.send('eth_getTransactionCount',[wallet,'latest'])),BigInt(nonce)+1n);assert.equal(await token.balanceOf(wallet),0n);const n=hexlify(randomBytes(32)),deadline=Math.floor(Date.now()/1000)+600,amount=BigInt(a.balance);const signature=await service.signTypedData({...domain(address),chainId:1337},claimTypes,{wallet,amount,nonce:n,deadline});await send(vault.withdraw(amount,n,deadline,signature));assert.equal(await token.balanceOf(wallet),160n*UNIT);assert.equal(BigInt(await provider.send('eth_getTransactionCount',[wallet,'latest'])),BigInt(nonce)+2n);await assert.rejects(vault.withdraw.staticCall(amount,n,deadline,signature),/revert|Used nonce/);});
 test('withdrawal vouchers cannot be stolen, altered, replayed across vaults or used after expiry',async()=>{const wallet=await alice.getAddress(),address=await vault.getAddress(),nonce=hexlify(randomBytes(32)),amount=UNIT,deadline=Math.floor(Date.now()/1000)+600;const signature=await service.signTypedData({...domain(address),chainId:1337},claimTypes,{wallet,amount,nonce,deadline});await assert.rejects(vault.connect(bob).withdraw.staticCall(amount,nonce,deadline,signature));await assert.rejects(vault.withdraw.staticCall(amount+1n,nonce,deadline,signature));const bad=await service.signTypedData({...domain(await token.getAddress()),chainId:1337},claimTypes,{wallet,amount,nonce,deadline});await assert.rejects(vault.withdraw.staticCall(amount,nonce,deadline,bad));const expired=1,old=await service.signTypedData({...domain(address),chainId:1337},claimTypes,{wallet,amount,nonce,deadline:expired});await assert.rejects(vault.withdraw.staticCall(amount,nonce,expired,old));});
 test('ETH top-up deposits directly to vault; reserve funding is distinctly labelled',async()=>{const wallet=await alice.getAddress(),before=await token.balanceOf(wallet),receipt=await send(vault.depositEth({value:parseEther('0.001')}));assert.equal(await token.balanceOf(wallet),before);const logs=receipt.logs.map(l=>{try{return vault.interface.parseLog(l);}catch{return null;}}).filter(Boolean);assert.equal(logs.find(l=>l.name==='EthDeposited').args.amount,100n*UNIT);assert.ok(!logs.some(l=>l.name==='ReserveFunded'));});
+
+test('ETH → saved game ARCA → partial wallet ARCA payout preserves retained credit and uses two transactions',async()=>{
+  const wallet=await bob.getAddress(),address=await vault.getAddress(),db=dbAdapter();
+  const before=await token.balanceOf(wallet),startNonce=BigInt(await provider.send('eth_getTransactionCount',[wallet,'latest']));
+  await transact(db,{id:'reserve',fingerprint:'reserve',wallet,event:{kind:'setup',vault:address,amount:String(500n*UNIT)}});
+  const receipt=await send(vault.connect(bob).depositEth({value:parseEther('0.002')}));
+  const credited=depositAmount(receipt,address,wallet);assert.equal(credited,String(200n*UNIT));
+  await transact(db,{id:'deposit:'+receipt.hash,fingerprint:receipt.hash,wallet,event:{kind:'deposit',amount:credited}});
+  assert.equal(await token.balanceOf(wallet),before);
+  await transact(db,{id:'grow',fingerprint:'grow',wallet,event:{kind:'grow',id:'bloom',species:4,tier:0,infusion:2,roll:1},now:0});
+  await transact(db,{id:'sale',fingerprint:'sale',wallet,event:{kind:'sell',id:'bloom'},now:9000});
+  assert.equal((await readAccount(db,wallet)).balance,String(180n*UNIT));
+  assert.equal(BigInt(await provider.send('eth_getTransactionCount',[wallet,'latest'])),startNonce+1n);
+  const nonce=hexlify(randomBytes(32)),deadline=Math.floor(Date.now()/1000)+600,amount=40n*UNIT;
+  await transact(db,{id:'withdraw',fingerprint:'withdraw',wallet,event:{kind:'withdraw',nonce,amount:String(amount),deadline}});
+  const signature=await service.signTypedData({...domain(address),chainId:1337},claimTypes,{wallet,amount,nonce,deadline});
+  const paid=await send(vault.connect(bob).withdraw(amount,nonce,deadline,signature));
+  await transact(db,{id:'paid',fingerprint:paid.hash,wallet,event:{kind:'paid',nonce,hash:paid.hash}});
+  assert.equal(await token.balanceOf(wallet),before+amount);
+  assert.equal((await readAccount(db,wallet)).balance,String(140n*UNIT));
+  assert.equal(BigInt(await provider.send('eth_getTransactionCount',[wallet,'latest'])),startNonce+2n);
+  await transact(db,{id:'play-again',fingerprint:'play-again',wallet,event:{kind:'grow',id:'bloom2',species:1,tier:0,infusion:0,roll:1}});
+  assert.equal((await readAccount(db,wallet)).balance,String(80n*UNIT));
+  assertBacked((await readLedger(db)).value);db.sql.close();
+});
