@@ -31,6 +31,7 @@ export function events(r,address,iface,name) {
   return r.logs.filter(l=>l.address.toLowerCase()===address.toLowerCase()).flatMap(l=>{try{const p=iface.parseLog(l);return p?.name===name?[p.args]:[];}catch{return [];}});
 }
 export function depositAmount(r,vault,wallet) {
+  vault=vault.toLowerCase();wallet=wallet.toLowerCase();
   const transfers=events(r,TOKEN,tokenInterface,'Transfer').filter(e=>e.from.toLowerCase()===wallet&&e.to.toLowerCase()===vault);
   const deposits=events(r,vault,vaultInterface,'EthDeposited').filter(e=>e.wallet.toLowerCase()===wallet);
   const amount=transfers.reduce((n,e)=>n+e.value,0n)+deposits.reduce((n,e)=>n+e.amount,0n);
