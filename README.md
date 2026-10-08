@@ -48,7 +48,7 @@ All values are ARCA. The server reserves the maximum Legendary reward before acc
 
 1. Configure a new server-only `ARCA_SIGNER_KEY` as a **secret** in Sites. Never use the user's MetaMask key, expose this key to the frontend, commit it, or rotate it after vault deployment without a migration plan. Production has its separate service secret configured.
 2. The existing operator wallet `0x962189cAF0c97bd530611818b96Dc54242428a33` signs in on the website and opens **Operator · activate settlement**.
-3. Review reserve funding (default **0.005 Sepolia ETH = 500 ARCA**) plus deployment gas, and confirm the one-time deployment in MetaMask. This setup payment is separate from normal player deposits, does not move existing wallet ARCA, and initially backs the basic potion. It is not a personal game credit.
+3. Review reserve funding (default **0.005 Sepolia ETH = 500 ARCA**) plus the live quoted maximum deployment fee, and confirm the one-time deployment in MetaMask. This setup payment is separate from normal player deposits, does not move existing wallet ARCA, and initially backs the basic potion. It is not a personal game credit.
 4. The website checks successful deployment, exact runtime bytecode, token address, fixed service signer and operator, then atomically registers the vault and initial reserve in D1. The registration itself needs no wallet transaction. If the connection drops, use Register an already deployed vault with the saved address and transaction hash.
 5. Only then perform a real deposit and withdrawal through the public website, record their hashes and submit the verified deployed vault address. Do not claim this step is complete before receipts exist.
 
@@ -72,7 +72,7 @@ Schema is in `db/schema.ts`. Generate append-only migrations with `pnpm db:gener
 
 ## Validation and demonstration
 
-44 tests cover retained contracts and wallet diagnostics plus new real ERC-20 deposit/payout transactions, no chain writes during gameplay, partial withdrawals, replay resistance, stolen/altered/expired vouchers, concurrent spending, insufficient reserves, rollback, login ownership, nonce replay and hidden mutations. Local tests do not prove live Sepolia completion.
+45 tests cover retained contracts and wallet diagnostics plus new real ERC-20 deposit/payout transactions, no chain writes during gameplay, partial withdrawals, replay resistance, stolen/altered/expired vouchers, concurrent spending, insufficient reserves, rollback, login ownership, nonce replay and hidden mutations. Local tests do not prove live Sepolia completion.
 
 For a seven-minute assessment: show token/vault addresses → connect and sign in → deposit (transaction 1) → choose a seed and grow with no wallet prompt → sell and show game credit → show both Continue/Withdraw choices → withdraw (transaction 2) → open the successful receipt, ARCA Transfer and wallet balance. Explain the off-chain gameplay / on-chain custody tradeoff.
 
