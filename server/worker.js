@@ -2,6 +2,10 @@ import {verifyMessage,keccak256,toUtf8Bytes} from 'ethers';
 import {database,readLedger,readAccount,transact,positive,rewardOf} from './ledger.js';
 import {TOKEN,OPERATOR,CHAIN,authorizer,claimTypes,domain,rpc,receipt,call,tokenInterface,vaultInterface,events,depositAmount,verifySetup,paidReceipt,deploymentQuote} from './chain.js';
 
+const PAGES_ORIGIN='https://zliu05072-prog.github.io';
+const isPages=request=>request.headers.get('origin')===PAGES_ORIGIN;
+const loginOrigin=request=>isPages(request)?PAGES_ORIGIN:new URL(request.url).origin;
+const sessionKey=(request,raw)=>hash((isPages(request)?'pages:':'')+raw);
 const hexRandom=(n=32)=>'0x'+Array.from(crypto.getRandomValues(new Uint8Array(n)),b=>b.toString(16).padStart(2,'0')).join('');
 const hash=s=>keccak256(toUtf8Bytes(s));
 const json=(data,status=200,headers={})=>Response.json(data,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff',...headers}});
@@ -13,9 +17,9 @@ async function limited(db,key,max,now=Date.now()) {
   if(row.count>max)throw Error('Too many requests. Please wait a few minutes.');
 }
 async function session(db,request) {
-  const raw=request.headers.get('cookie')?.match(/(?:^|;\s*)arcana_session=([a-f0-9]{64})/)?.[1];
+  const raw=isPages(request)?request.headers.get('authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1]:request.headers.get('cookie')?.match(/(?:^|;\s*)arcana_session=([a-f0-9]{64})/)?.[1];
   if(!raw)return null;
-  const row=await db.prepare('SELECT wallet FROM sessions WHERE hash = ? AND expires > ?').bind(hash(raw),Date.now()).first();return row?.wallet||null;
+  const row=await db.prepare('SELECT wallet FROM sessions WHERE hash = ? AND expires > ?').bind(sessionKey(request,raw),Date.now()).first();return row?.wallet||null;
 }
 function cookie(request,token,age) {return `arcana_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${new URL(request.url).protocol==='https:'?'; Secure':''}`;}
 async function auth(db,request){const wallet=await session(db,request);if(!wallet){const e=Error('Sign in once with your wallet to open your saved garden. No gas is charged.');e.status=401;throw e;}return wallet;}
@@ -27,23 +31,24 @@ async function route(request,env) {
     return json({wallet,account:wallet?publicAccount(await readAccount(db,wallet)):null,vault:l.value.vault,token:TOKEN,chainId:CHAIN,operator:OPERATOR,signer:env.ARCA_SIGNER_KEY?authorizer(env).address:null,reserve:{free:(BigInt(l.value.backing)-BigInt(l.value.credits)-BigInt(l.value.pending)-BigInt(l.value.reserved)-BigInt(l.value.fees)).toString(),fees:l.value.fees},serverTime:Date.now()});
   }
   if(request.method!=='POST')return json({error:'Not found'},404);
-  if(request.headers.get('origin')!==url.origin) return json({error:'Open this action from the Arcana website.'},403);
+  if(request.headers.get('origin')!==url.origin&&!isPages(request)) return json({error:'Open this action from the Arcana website.'},403);
   if(!request.headers.get('content-type')?.startsWith('application/json'))return json({error:'JSON required'},415);
   const text=await request.text();if(text.length>8192)return json({error:'Request too large'},413);const body=JSON.parse(text);
   if(path==='/api/auth/challenge') {
     const wallet=walletAddress(body.wallet);await limited(db,`login:${wallet}`,20);await limited(db,`ip:${hash(request.headers.get('cf-connecting-ip')||'unknown')}`,100);
     const id=hexRandom(24),expires=Date.now()+300000;
-    const message=`${url.host} wants you to sign in to Arcana.\n\nWallet: ${wallet}\nNetwork: Ethereum Sepolia (${CHAIN})\nURI: ${url.origin}\nNonce: ${id}\nExpires: ${new Date(expires).toISOString()}\n\nOpen your saved garden. This signature does not transfer tokens, approve spending, or cost gas.`;
+    const origin=loginOrigin(request);
+    const message=`${new URL(origin).host} wants you to sign in to Arcana.\n\nWallet: ${wallet}\nNetwork: Ethereum Sepolia (${CHAIN})\nURI: ${origin}\nNonce: ${id}\nExpires: ${new Date(expires).toISOString()}\n\nOpen your saved garden. This signature does not transfer tokens, approve spending, or cost gas.`;
     await db.batch([db.prepare('DELETE FROM challenges WHERE expires < ?').bind(Date.now()),db.prepare('DELETE FROM sessions WHERE expires < ?').bind(Date.now()),db.prepare('DELETE FROM limits WHERE expires < ?').bind(Date.now()),db.prepare('INSERT INTO challenges (id,wallet,message,expires) VALUES (?,?,?,?)').bind(id,wallet,message,expires)]);
     return json({id,message});
   }
   if(path==='/api/auth/verify') {
     if(typeof body.id!=='string'||typeof body.signature!=='string')throw Error('Invalid login proof.');
     const c=await db.prepare('SELECT * FROM challenges WHERE id = ? AND expires > ?').bind(body.id,Date.now()).first();
-    if(!c||verifyMessage(c.message,body.signature).toLowerCase()!==c.wallet)throw Error('Wallet login signature is invalid or expired.');
+    if(!c||!c.message.includes(`\nURI: ${loginOrigin(request)}\n`)||verifyMessage(c.message,body.signature).toLowerCase()!==c.wallet)throw Error('Wallet login signature is invalid or expired.');
     const deleted=await db.prepare('DELETE FROM challenges WHERE id = ? RETURNING id').bind(body.id).first();if(!deleted)throw Error('Login request already used.');
-    const token=hexRandom().slice(2);await db.prepare('INSERT INTO sessions (hash,wallet,expires) VALUES (?,?,?)').bind(hash(token),c.wallet,Date.now()+7*86400000).run();
-    return json({wallet:c.wallet},200,{'set-cookie':cookie(request,token,7*86400)});
+    const token=hexRandom().slice(2);await db.prepare('INSERT INTO sessions (hash,wallet,expires) VALUES (?,?,?)').bind(sessionKey(request,token),c.wallet,Date.now()+(isPages(request)?8*3600000:7*86400000)).run();
+    return isPages(request)?json({wallet:c.wallet,sessionToken:token}):json({wallet:c.wallet},200,{'set-cookie':cookie(request,token,7*86400)});
   }
   if(path==='/api/auth/logout')return json({ok:true},200,{'set-cookie':cookie(request,'',0)});
   const wallet=await auth(db,request);await limited(db,`actions:${wallet}`,300);
@@ -108,5 +113,11 @@ async function route(request,env) {
 export default {async fetch(request,env) {
   const path=new URL(request.url).pathname;
   if(!path.startsWith('/api/'))return env.ASSETS.fetch(request);
-  try{return await route(request,env);}catch(e){console.error('Arcana API:',path,e.message);return json({error:e.message||'The garden is temporarily unavailable.',unchanged:e.unchanged===true},e.status||400);}
+  const origin=request.headers.get('origin');
+  if(origin&&origin!==new URL(request.url).origin&&!isPages(request))return json({error:'This origin is not allowed.'},403);
+  const cors=isPages(request)?{'access-control-allow-origin':PAGES_ORIGIN,'access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'Content-Type, Authorization','vary':'Origin'}:{};
+  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
+  let response;try{response=await route(request,env);}catch(e){console.error('Arcana API:',path,e.message);response=json({error:e.message||'The garden is temporarily unavailable.',unchanged:e.unchanged===true},e.status||400);}
+  for(const [key,value] of Object.entries(cors))response.headers.set(key,value);
+  return response;
 }};
