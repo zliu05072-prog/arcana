@@ -50,3 +50,17 @@ test('ETH → saved game ARCA → partial wallet ARCA payout preserves retained 
   assert.equal((await readAccount(db,wallet)).balance,String(80n*UNIT));
   assertBacked((await readLedger(db)).value);db.sql.close();
 });
+
+test('GitHub Pages login is origin-bound, uses bearer sessions and rejects other origins',async()=>{
+  const db=dbAdapter(),user=Wallet.createRandom(),env={DB:db,ARCA_SIGNER_KEY:Wallet.createRandom().privateKey},origin='https://zliu05072-prog.github.io';
+  const req=(path,body,token='',source=origin,method)=>worker.fetch(new Request('https://arcana.example/api/'+path,{method:method||(body?'POST':'GET'),headers:{origin:source,'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:body?JSON.stringify(body):undefined}),env);
+  const preflight=await req('state',undefined,'',origin,'OPTIONS');assert.equal(preflight.status,204);assert.equal(preflight.headers.get('access-control-allow-origin'),origin);assert.equal(preflight.headers.get('access-control-allow-credentials'),null);
+  const c=await(await req('auth/challenge',{wallet:user.address})).json();assert.match(c.message,/URI: https:\/\/zliu05072-prog.github.io/);
+  const signature=await user.signMessage(c.message);assert.equal((await req('auth/verify',{id:c.id,signature},'','https://arcana.example')).status,400);
+  const response=await req('auth/verify',{id:c.id,signature}),login=await response.json();assert.match(login.sessionToken,/^[a-f0-9]{64}$/);assert.equal(response.headers.get('set-cookie'),null);
+  const state=await(await req('state',undefined,login.sessionToken)).json();assert.equal(state.wallet,user.address.toLowerCase());
+  assert.equal((await(await req('state')).json()).wallet,null);
+  assert.equal((await req('state',undefined,login.sessionToken,'https://evil.example')).status,403);
+  assert.equal((await(await req('state',undefined,login.sessionToken,'https://arcana.example')).json()).wallet,null);
+  assert.equal((await req('auth/verify',{id:c.id,signature})).status,400);db.sql.close();
+});
