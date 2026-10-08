@@ -1,4 +1,5 @@
 import {walletTransfer} from './receipt.js';
+import {inspectWallet,inspectPayment,recentPayments} from './wallet-check.js';
 import {BrowserProvider,Contract,ContractFactory,formatEther,parseEther,getAddress} from 'ethers';
 import artifact from './arcana-contract.json';
 import deployment from './arcana-deployment.json';
@@ -6,6 +7,7 @@ import {gamePage} from './game-page.js';
 import {SEEDS,INFUSIONS,POTIONS,RARITIES,FORMS,specimen,growingArt,rarityForRoll,potion,potionSVG,inventoryKey,INITIAL_RESERVE,rewardAmount,quoteArca} from './world.js';
 import './game.css';
 import './garden-v3.css';
+import './purse.css';
 
 const $=s=>document.querySelector(s), SEPOLIA='0xaa36a7', KEY='arcana:v6:';
 const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -18,7 +20,7 @@ if(!/^0x[\da-f]{40}$/i.test(address))address='';
 let provider,injected,account='',contract,busy=false,practice=false,filter='all',flowers=[],claimable=0n,balance=0n,limit=12,total=0,loadId=0;
 let inventory=Array(12).fill(0n),starterClaimed=false;
 let demoFlowers=[],demoCredit=0n,demoBalance=0n,demoInventory=Array(12).fill(0n),demoStarter=false,selectedSeed=0,wateringId=null;
-let walletBlock=0, activeTransaction=null;
+let walletBlock=0, activeTransaction=null, walletAudit=null, auditBusy=false, historyAccount='';
 let reviewAction,celebrationTimer,refreshing=false,lastGardenMarkup='';
 const unit=10n**18n;
 const blankLedger=()=>({pool:INITIAL_RESERVE,locked:0n,fees:0n,earned:0n,operator:'',eth:0n});
@@ -92,7 +94,7 @@ function render(){
   const markup=visible.map(f=>{
     const grade=RARITIES[f.rarity],title=f.ready?FORMS[f.species][f.rarity]:SEEDS[f.species].name;
     const art=f.ready?specimen(f.species,f.rarity):f.watered?growingArt(f.species,f.phase,f.infusion):`<div class="planted-art">${specimen(f.species,0,true)}<span class="soil-ring"></span></div>`;
-    const copy=f.sold?'Pip has collected this flower. The sale payment was sent directly to your wallet.':!f.watered?'Your seed is planted. Give it one potion from your satchel to awaken it.':f.ready?f.expired?'The preservation window passed. A Common bloom remains.':f.revealed?(practice?'Your practice bloom is ready. Keep it or sell it to Pip.':'Preserved on-chain. Keep this flower or sell it whenever you like.'):`Sell or preserve before block ${f.revealBlock+257} to keep this mutation.`:practice?'A little magic is taking root. Practice growth takes nine seconds.':`Watering confirmed. Waiting for ${f.blocksLeft} more block${f.blocksLeft===1?'':'s'} before the final bloom.`;
+    const copy=f.sold?'Pip has collected this flower. Check your payment receipt in the spellbook; any unclaimed earnings appear at the market.':!f.watered?'Your seed is planted. Give it one potion from your satchel to awaken it.':f.ready?f.expired?'The preservation window passed. A Common bloom remains.':f.revealed?(practice?'Your practice bloom is ready. Keep it or sell it to Pip.':'Preserved on-chain. Keep this flower or sell it whenever you like.'):`Sell or preserve before block ${f.revealBlock+257} to keep this mutation.`:practice?'A little magic is taking root. Practice growth takes nine seconds.':`Watering confirmed. Waiting for ${f.blocksLeft} more block${f.blocksLeft===1?'':'s'} before the final bloom.`;
     return `<article class="flower-card ${f.ready?'is-bloomed':''}" style="--rarity:${grade.color}" data-flower="${f.id}"><div class="flower-art"><div class="card-top"><span>${practice?'PRACTICE':'SPECIMEN'} ${String(f.id+1).padStart(3,'0')}</span><span class="pill">${f.sold?'Sold to Pip':f.ready?grade.label:f.watered?'Growing':'Planted'}</span></div>${art}<span class="mutation-tag">${f.ready?grade.name+' mutation':f.watered?['','A first awakening','Gathering its magic'][f.phase]:'A little promise in the soil'}</span></div><div class="flower-body"><small>${f.watered?INFUSIONS[f.infusion].name+' · '+POTIONS[f.tier].name:'SEED '+String(f.species+1).padStart(2,'0')+' · READY TO WATER'}</small><h3>${title}</h3><p>${copy}</p>${f.watered?`<div class="growth-track"><span style="width:${f.ready?100:f.phase===1?33:67}%"></span></div><div class="offer"><span>${f.sold?'SALE PRICE':'PIP’S OFFER'}</span><b>${f.ready?amount(f.reward):'…'} <small>ARCA</small></b></div>`:''}${f.sold?'<span class="sold-stamp">✓ Collected by Pip</span>':!f.watered?`<button class="button full" data-water="${f.id}" ${busy?'disabled':''}>Choose a potion ✧</button>`:f.ready?`<button class="button full" data-sell="${f.id}" ${busy?'disabled':''}>Sell to Pip${practice?' · practice':' · MetaMask ↗'}</button>${!f.revealed&&!practice?`<button class="text-button preserve" data-preserve="${f.id}" ${busy?'disabled':''}>Keep this bloom · preserve ↗</button>`:''}`:'<button class="button full" disabled>Growing · a little patience…</button>'}</div></article>`;
   }).join('')||`<div class="empty-garden"><span>✧</span><h3>${filter==='all'?'Your next wonder starts with a seed.':'No flowers in this corner yet.'}</h3><p>${practice?'Choose any of the five seeds, then buy and use a practice potion.':!account?'Connect MetaMask to start your own on-chain garden.':!contract?'Open Contract to deploy or select ArcanaGarden V6.':'Choose a seed from the cabinet, or try a different garden filter.'}</p><a href="#seed-library" class="quiet-link">Visit the seed cabinet ↗</a></div>`;
   // Avoid restarting growth animations on unchanged block polls.
@@ -111,24 +113,70 @@ function render(){
   updateExchange();updateRecipe();updateWithdrawal();paintHistory();
 }
 function paintWallet(){
+  const audit=!practice&&walletAudit?.wallet.toLowerCase()===account.toLowerCase()&&walletAudit.token.toLowerCase()===address.toLowerCase()?walletAudit:null;
+  const useAudit=audit&&audit.block>=walletBlock;
   $('#wallet-mode').textContent=practice?'PRACTICE WALLET · SIMULATED':'YOUR SEPOLIA WALLET';
-  $('#wallet-live-balance').textContent=practice?amount(demoBalance):contract?amount(balance):'—';
-  $('#wallet-live-address').textContent=practice?'Practice tokens never enter MetaMask.':account||'Connect MetaMask to read your token balance.';
-  $('#wallet-sync').textContent=practice?'Simulation only · no on-chain transfers':contract?`Verified on Sepolia at block ${walletBlock}. ARCA and ETH are separate balances.`:account?'Wallet balance unavailable. Refresh to retry.':'Balances come from the blockchain.';
+  $('#wallet-live-balance').textContent=practice?amount(demoBalance):useAudit?amount(audit.balance):contract?amount(balance):'—';
+  $('#wallet-eth-balance').textContent=practice?amount(demoEth):useAudit?Number(formatEther(audit.eth)).toFixed(6):contract&&ethBalance!==null?Number(formatEther(ethBalance)).toFixed(6):'—';
+  $('#wallet-live-address').textContent=practice?'Practice tokens never enter MetaMask.':account||'Connect MetaMask, or use the read-only balance check below.';
+  $('#wallet-sync').textContent=practice?'Simulation only · no on-chain transfers':useAudit?`Independent Sepolia read · block ${audit.block} · ${new Date(audit.checkedAt).toLocaleTimeString()}`:contract?`Wallet’s Sepolia connection · block ${walletBlock}`:'No connected wallet balance loaded.';
   $('#wallet-token-address').textContent=address;
   $('#wallet-explorer').hidden=practice||!account||!address;
   $('#wallet-explorer').href=`https://sepolia.etherscan.io/token/${address}?a=${account}`;
-  $('#wallet-refresh').disabled=busy||practice||!account;
+  $('#wallet-refresh').disabled=busy||practice||!account||auditBusy;
+  $('#wallet-refresh').textContent=auditBusy?'Checking Sepolia…':'Refresh balances';
+  $('#wallet-check-submit').disabled=auditBusy||practice;
+  $('#payment-check-submit').disabled=auditBusy||practice;
 }
+function auditCopy(a){
+  const states={matched:'Both connections agree. The blockchain balance is correct; if MetaMask shows another number, check its token contract and refresh its display.',mismatch:'The two connections disagree at the same block. MetaMask’s RPC may be returning stale data. Reopen MetaMask or switch networks and back, then check again.','wrong-network':'MetaMask is on a different network. Switch it to Sepolia.','wrong-account':'MetaMask’s selected account differs from the wallet checked below.',unavailable:'Independent balance verified. MetaMask comparison is unavailable; connect this wallet on Sepolia and retry.'};
+  const stale=Date.now()-a.blockTime>600000;
+  return `<span class="eyebrow">${stale?'NODE DATA MAY BE DELAYED':'INDEPENDENT SEPOLIA CHECK'}</span><div class="audit-amount">${amount(a.balance)} <small>ARCA</small></div><p>${states[a.comparison]}</p><dl class="audit-facts"><div><dt>Independent node</dt><dd>${amount(a.balance)} ARCA</dd></div><div><dt>MetaMask connection</dt><dd>${a.walletBalance===null?'Not available':amount(a.walletBalance)+' ARCA'}</dd></div><div><dt>Same block</dt><dd>${a.block}</dd></div></dl><p class="fine break">Wallet: ${esc(a.wallet)}<br>Token: ${esc(a.token)}<br>Checked ${new Date(a.checkedAt).toLocaleTimeString()}. The MetaMask comparison reads its network connection, not its token-list display.</p><a target="_blank" rel="noreferrer" href="https://sepolia.etherscan.io/token/${a.token}?a=${a.wallet}">View this exact wallet and token on Etherscan</a>`;
+}
+async function checkWallet(owner=account,{recover=false,quiet=false}={}){
+  if(auditBusy||practice||!owner||!address)return;
+  auditBusy=true;paintWallet();const token=address;
+  const result=$('#wallet-check-result');result.hidden=false;result.textContent='Reading Sepolia and comparing wallet connections…';
+  try{
+    const a=await inspectWallet({token,wallet:owner,walletRequest:injected?(method,params)=>injected.request({method,params}):undefined});a.checkedAt=Date.now();
+    if(practice||address!==token)return;
+    walletAudit=a;result.innerHTML=auditCopy(a);paintWallet();
+    if(recover&&owner.toLowerCase()===account.toLowerCase())await recoverPayments(a);
+  }catch(e){result.textContent='Balance check unavailable: '+errorText(e);if(!quiet)$('#wallet-help').open=true;}
+  finally{auditBusy=false;paintWallet();}
+}
+async function recoverPayments(a){
+  $('#history-sync').textContent='Looking for recent incoming ARCA transfers on Sepolia…';
+  try{const payments=await recentPayments({token:a.token,wallet:a.wallet,block:a.block});
+    if(practice||account.toLowerCase()!==a.wallet.toLowerCase()||address.toLowerCase()!==a.token.toLowerCase())return;
+    // Oldest first because record inserts at the front. Never replace an existing action label.
+    for(const p of payments.reverse())record(receipts.find(r=>r.hash===p.hash)?.label||'ARCA received',p.hash,'Confirmed',a.token,{account:a.wallet,blockNumber:p.blockNumber,networkFee:String(p.networkFee),proof:{received:String(p.proof.received),sent:String(p.proof.sent),net:String(p.proof.net)}});
+    $('#history-sync').textContent=payments.length?'Recent incoming transfers verified against successful receipts.':'No incoming transfers in the last 2,000 blocks. Older payments can be checked above by transaction hash.';
+  }catch{$('#history-sync').textContent='Recent history could not be loaded. Your balance is still available. Paste a transaction hash above or open Etherscan to check older payments.';}
+}
+$('#wallet-check-form').onsubmit=e=>{e.preventDefault();checkWallet($('#wallet-check-address').value.trim());};
+$('#payment-check-form').onsubmit=async e=>{e.preventDefault();if(auditBusy||practice)return;const target=$('#payment-check-result'),owner=$('#wallet-check-address').value.trim()||account,token=address;if(!owner){target.hidden=false;target.textContent='Enter the receiving wallet address above first.';return;}auditBusy=true;paintWallet();target.hidden=false;target.textContent='Checking receipt and token Transfer events…';
+  try{const p=await inspectPayment({hash:$('#payment-check-hash').value.trim(),token,wallet:getAddress(owner)});const r={label:'Verified ARCA transfer',status:'Confirmed',account:getAddress(owner),hash:p.hash,blockNumber:p.blockNumber,networkFee:String(p.networkFee),proof:{received:String(p.proof.received),sent:String(p.proof.sent),net:String(p.proof.net)}};
+    target.innerHTML=receiptBody(r);if(owner.toLowerCase()===account.toLowerCase()&&token===address)record(r.label,r.hash,r.status,token,r);
+  }catch(e){target.textContent=errorText(e);}finally{auditBusy=false;paintWallet();}
+};
+document.querySelectorAll('a[href="#wallet-help"]').forEach(link=>link.addEventListener('click',()=>$('#wallet-help').open=true));
+if(location.hash==='#wallet-help')$('#wallet-help').open=true;
+$('#copy-token').onclick=async()=>{try{await navigator.clipboard.writeText(address);$('#copy-token').textContent='Copied';setTimeout(()=>$('#copy-token').textContent='Copy token address',2000);}catch{notify('Copy the full token address shown in your petal purse.');}};
 function receiptBody(r){
   const confirmed=r.status==='Confirmed',proof=r.proof;
+  const snapshot=confirmed&&r.balanceBefore!==undefined&&r.balanceAfter!==undefined?`<div class="receipt-balances"><span>Wallet before <b>${amount(BigInt(r.balanceBefore))} ARCA</b></span><span>Wallet after <b>${amount(BigInt(r.balanceAfter))} ARCA</b></span></div>`:'';
   const delta=confirmed&&proof?`<div class="transfer-proof"><strong>${BigInt(proof.net)>=0n?'+':''}${amount(BigInt(proof.net))} ARCA</strong><span>${BigInt(proof.received)>0n?amount(BigInt(proof.received))+' ARCA received by your wallet':BigInt(proof.sent)>0n?amount(BigInt(proof.sent))+' ARCA spent from your wallet':'No ARCA transfer in this transaction'}</span><small>Verified from this token’s Transfer events · block ${esc(r.blockNumber)}</small>${r.networkFee?`<small>Network fee: ${amount(BigInt(r.networkFee))} Sepolia ETH · separate from ARCA</small>`:''}<small class="break">Wallet: ${esc(r.account)}</small></div>`:'';
-  return `<b>${esc(r.label)} · ${esc(r.status)}</b>${delta}${r.hash?`<a class="break" href="https://sepolia.etherscan.io/tx/${r.hash}" target="_blank" rel="noreferrer">Transaction: ${r.hash}</a>`:'<p>Review the request in MetaMask. No transaction has been submitted yet.</p>'}${r.status==='Pending'?'<p>Submitted to Sepolia. Your balance changes only after confirmation.</p>':''}`;
+  return `<b>${esc(r.label)} · ${esc(r.status)}</b>${delta}${snapshot}${r.hash?`<a class="break" href="https://sepolia.etherscan.io/tx/${r.hash}" target="_blank" rel="noreferrer">Transaction: ${r.hash}</a>`:'<p>Review the request in MetaMask. No transaction has been submitted yet.</p>'}${r.status==='Pending'?'<p>Submitted to Sepolia. Your balance changes only after confirmation.</p>':''}`;
 }
 function paintHistory(){
   const list=receipts.filter(r=>r.address.toLowerCase()===address.toLowerCase()&&account&&r.account?.toLowerCase()===account.toLowerCase()).slice(0,10),recent=activeTransaction||list[0];
   $('#latest-transaction').hidden=practice||!recent;
-  if(!practice&&recent)$('#latest-transaction').innerHTML=receiptBody(recent);
+  if(!practice&&recent){
+    const expanded=$('#latest-transaction details')?.open||false;
+    const net=recent.proof?BigInt(recent.proof.net):null;
+    $('#latest-transaction').innerHTML=recent.status==='Confirmed'&&net!==null?`<details class="latest-receipt" ${expanded?'open':''}><summary><span>Latest confirmed transfer</span><strong>${net>=0n?'+':''}${amount(net)} ARCA</strong><span>View receipt</span></summary>${receiptBody(recent)}</details>`:receiptBody(recent);
+  }
   $('#history').innerHTML=practice?'<p class="empty-history">Practice leaves no blockchain receipts. Return to Sepolia to view your real spellbook.</p>':list.map(r=>`<article class="receipt-entry">${receiptBody(r)}</article>`).join('')||'<p class="empty-history">No receipts saved in this browser. Use View ARCA transfers above for your complete token history.</p>';
 }
 function record(label,hash,status,contractAddress=address,details={}){
@@ -149,7 +197,7 @@ async function connect(){
   if(await injected.request({method:'eth_chainId'})!==SEPOLIA)await injected.request({method:'wallet_switchEthereumChain',params:[{chainId:SEPOLIA}]});
   provider=new BrowserProvider(injected);account=await(await provider.getSigner()).getAddress();ethBalance=await provider.getBalance(account);
   if(!injected._arcanaListeners){injected.on('accountsChanged',()=>location.reload());injected.on('chainChanged',()=>location.reload());injected._arcanaListeners=true;}
-  await load();render();
+  await load();render();$('#wallet-check-address').value=account;const recover=historyAccount!==account.toLowerCase();historyAccount=account.toLowerCase();void checkWallet(account,{recover,quiet:true});
 }
 async function load(minimumBlock=0){
   if(practice)return render();const request=++loadId;
@@ -170,7 +218,7 @@ async function load(minimumBlock=0){
 async function ensureGarden(){if(practice)return true;if(!account)await connect();if(!contract){if(address){notify('Could not read the configured garden. Refresh wallet balance and try again; no new deployment is needed.',true);}else{$('#setup-dialog').showModal();notify('Select a deployed garden before playing.');}return false;}return true;}
 function review(title,html,action){$('#review-title').textContent=title;$('#review-copy').innerHTML=html;reviewAction=action;$('#review-dialog').showModal();}
 async function transact(label,action,isDeploy=false){
-  if(busy)return;lock(true);let tx,confirmed=false;const previousAddress=address;
+  if(busy)return;lock(true);let tx,confirmed=false,before;const previousAddress=address;
   try{
     if(!account)await connect();
     if(await injected.request({method:'eth_chainId'})!==SEPOLIA)throw new Error('Switch MetaMask to Sepolia.');
@@ -179,7 +227,7 @@ async function transact(label,action,isDeploy=false){
     document.querySelectorAll('dialog[open]').forEach(d=>d.close());
     activeTransaction={label,status:'Awaiting MetaMask approval'};paintHistory();
     notify(`${label}: open MetaMask and review the transaction.`);
-    tx=await action(signer);activeTransaction=null;record(label,tx.hash,'Pending',isDeploy?'':address);
+    before=balance;tx=await action(signer);activeTransaction=null;record(label,tx.hash,'Pending',isDeploy?'':address);
     notify(`${label}: submitted. Waiting for Sepolia confirmation…`);
     let receipt;
     try{receipt=await tx.wait();}catch(e){if(e.code==='TRANSACTION_REPLACED'){record(label,tx.hash,e.cancelled?'Cancelled / replaced':'Replaced');if(e.cancelled)throw e;tx=e.replacement;receipt=e.receipt;}else throw e;}
@@ -187,6 +235,8 @@ async function transact(label,action,isDeploy=false){
     confirmed=true;
     if(isDeploy){address=getAddress(receipt.contractAddress);save('address',address);save('deployment',{chainId:11155111,address,transactionHash:receipt.hash});}
     const transfer=recordConfirmed(label,receipt);const loaded=await load(receipt.blockNumber);
+    if(loaded)record(label,receipt.hash,'Confirmed',address,{balanceBefore:String(before),balanceAfter:String(balance)});
+    void checkWallet(account,{quiet:true});
     notify(`${label} confirmed in block ${receipt.blockNumber}. ${loaded===false?'Live refresh failed; use Refresh garden.':'Your on-chain garden is up to date.'}`);
     celebrate(transfer.received>0n?`${amount(transfer.received)} ARCA received by ${short(account)}. Verified in your transaction receipt.`:label+' confirmed.');
     $('#latest-transaction').scrollIntoView({behavior:'smooth',block:'center'});
@@ -204,7 +254,7 @@ $('#exchange-amount').oninput=updateExchange;document.querySelectorAll('[data-ex
 $('#withdraw-amount').oninput=updateWithdrawal;$('#withdraw-max').onclick=()=>{$('#withdraw-amount').value=amount(state().credit);updateWithdrawal();};
 document.querySelectorAll('[data-seed]').forEach(b=>b.onclick=()=>{selectedSeed=Number(b.dataset.seed);render();});
 document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('selected',x===b));render();});
-$('#refresh').onclick=()=>load();$('#wallet-refresh').onclick=()=>load();$('#more').onclick=()=>{limit+=12;load();};
+$('#refresh').onclick=()=>load();$('#wallet-refresh').onclick=async()=>{await load();await checkWallet(account,{recover:true});};$('#more').onclick=()=>{limit+=12;load();};
 function showAll(){filter='all';document.querySelectorAll('[data-filter]').forEach(b=>b.classList.toggle('selected',b.dataset.filter==='all'));}
 async function prepare(action){if(busy)return;try{if(await ensureGarden())action();}catch(e){notify(errorText(e),true);}}
 $('#exchange-buy').onclick=()=>prepare(()=>{try{const q=exchangeQuote();if(practice){if(demoEth<q.wei)throw new Error('Not enough practice ETH.');demoEth-=q.wei;demoBalance+=q.tokens;demoLedger.eth+=q.wei;render();celebrate(`${amount(q.tokens)} practice ARCA received. Visit the potion shop!`);return;}
@@ -230,9 +280,16 @@ $('#claim').onclick=()=>{if(busy)return;try{const value=parseEther($('#withdraw-
 setInterval(()=>{let changed=false;for(const f of demoFlowers){if(!f.watered||f.ready)continue;if(Date.now()>=f.readyAt){const rarity=rarityForRoll(crypto.getRandomValues(new Uint32Array(1))[0]%10000);Object.assign(f,{ready:true,revealed:true,rarity,reward:rewardAmount(f.tier,rarity)});changed=true;if(practice)celebrate(`${FORMS[f.species][rarity]} · ${RARITIES[rarity].label}!`);}else if(Date.now()-f.wateredAt>=4500&&f.phase!==2){f.phase=2;changed=true;}}if(changed&&practice)render();},500);
 $('#claim-eth-revenue').onclick=()=>{if(busy||practice||!contract)return;const value=ledger.eth;review('Collect exchange receipts.',`<p>Transfer ${amount(value)} Sepolia test ETH from exchange receipts to the operator wallet. ARCA buyback reserves and player earnings stay in the garden.</p>`,()=>transact('Exchange ETH collected',s=>contract.connect(s).claimEthRevenue(value)));};
 $('#claim-site-fees').onclick=()=>{if(busy||practice||!contract)return;const value=ledger.fees;review('Collect the site’s earned fees.',`<p>Withdraw ${amount(value)} ARCA of earned site fees to the operator wallet. Protected buyback reserves and player earnings cannot be withdrawn here.</p>`,()=>transact('Site fees withdrawn',s=>contract.connect(s).claimSiteRevenue(value)));};
-$('#watch-token').onclick=async()=>{try{if(!contract||practice)return;if(await injected.request({method:'eth_chainId'})!==SEPOLIA)throw new Error('Switch to Sepolia first.');const added=await injected.request({method:'wallet_watchAsset',params:{type:'ERC20',options:{address,symbol:'ARCA',decimals:18}}});notify(added?'ARCA added to MetaMask. View it under your Sepolia tokens.':'Token import was not completed. You can add it manually with the garden contract address.');}catch(e){notify(errorText(e),true);}};
+$('#watch-token').onclick=async()=>{try{if(!contract||practice)return;if(await injected.request({method:'eth_chainId'})!==SEPOLIA)throw new Error('Switch to Sepolia first.');const added=await injected.request({method:'wallet_watchAsset',params:{type:'ERC20',options:{address,symbol:'ARCA',decimals:18}}});$('#wallet-help').open=true;notify(added?'MetaMask accepted the current ARCA token request. This does not transfer tokens or prove its displayed balance. Compare the full contract and check the balance below.':'Token import was not completed. You can add it manually with the full contract address above.');await checkWallet(account,{recover:true});}catch(e){notify(errorText(e),true);}};
 $('#deploy').onclick=()=>{if(practice){notify('Return to Sepolia mode before deploying a real contract.');return;}review('Create your Sepolia garden.',`<p>Deploy ArcanaGarden V6 with the Sepolia ETH-to-ARCA exchange, fixed prices, 10% included site fees and a protected buyback pool. The deploying wallet becomes the fee operator. The contract creates 1,000,000 test ARCA as initial reserve; this is not a real-value deposit. MetaMask will show the deployment gas cost. Keep this address for all players.</p>`,()=>transact('Garden deployed',async s=>{const c=await new ContractFactory(artifact.abi,artifact.bytecode,s).deploy();return c.deploymentTransaction();},true));$('#setup-dialog').close();};
 $('#address-form').onsubmit=async e=>{e.preventDefault();if(busy)return;lock(true);try{const candidate=getAddress(e.target.elements.address.value.trim());if(!account)await connect();await verify(candidate);address=candidate;save('address',address);practice=false;$('#setup-dialog').close();await load();notify('ArcanaGarden verified on Sepolia. Choose a seed, claim starter ARCA, and visit the potion shop.');}catch(e){notify(errorText(e),true);}finally{lock(false);}};
 $('#export').onclick=()=>{const stored=saved('deployment',{});const record=stored.address===address?stored:{chainId:11155111,address,transactionHash:''};const url=URL.createObjectURL(new Blob([JSON.stringify(record,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='arcana-deployment.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 render();updateRecipe();
 setInterval(async()=>{if(busy||practice||!account||!address||refreshing||document.querySelector('dialog[open]'))return;refreshing=true;try{await load();}finally{refreshing=false;}},6500);
+
+async function restoreWallet(){
+  const existing=announced[0]||window.ethereum?.providers?.find(p=>p.isMetaMask)||(window.ethereum?.isMetaMask?window.ethereum:null);
+  if(!existing)return;
+  try{const accounts=await existing.request({method:'eth_accounts'});if(!accounts.length||await existing.request({method:'eth_chainId'})!==SEPOLIA)return;await connect();}catch{/* The Connect Wallet button remains available. */}
+}
+void restoreWallet();
