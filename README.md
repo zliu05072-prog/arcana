@@ -23,14 +23,15 @@ Example: deposit 180 ARCA → buy a 60-ARCA potion → sell a Common flower for 
 
 ## Economy
 
-| Potion | Cost | Included site fee | Common 75% | Uncommon 20% | Rare 4% | Legendary 1% |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Whisperdew Tonic | 60 | 6 | 40 | 60 | 150 | 400 |
-| Moonwell Draught | 120 | 12 | 80 | 120 | 300 | 800 |
-| Starfire Elixir | 240 | 24 | 160 | 240 | 600 | 1,600 |
-| Phoenix Nectar | 480 | 48 | 320 | 480 | 1,200 | 3,200 |
+| Potion | Cost | Included site fee | Common | Uncommon | Rare | Legendary |
+|---|---:|---:|---:|---:|---:|---:|
+| Whisperdew Tonic | 60 | 6 | 75% | 20% | 4% | 1% |
+| Moonwell Draught | 120 | 12 | 70% | 20% | 9% | 1% |
+| Starfire Elixir | 180 | 18 | 67% | 20% | 12% | 1% |
 
-All values are ARCA. The server reserves the maximum Legendary reward before accepting a purchase. If reserves are insufficient, the purchase stops without spending tokens; higher tiers may initially be unavailable. The 10% site fee is accounted separately and retained in escrow; this settlement release has no operator-fee payout endpoint. A 60-ARCA potion has nominal expected payout 52, site fee 6 and expected reserve gain 2. These are nominal outcomes, not guaranteed profit. ARCA has no promised cash value or ETH redemption.
+All new flowers sell for 40 / 60 / 150 / 400 ARCA by rarity, independently of potion tier.
+
+All values are ARCA. The server reserves the maximum Legendary reward before accepting a purchase. If reserves are insufficient, the purchase stops without spending tokens; purchases pause until enough unreserved ARCA is available. The 10% site fee is accounted separately and retained in escrow; this settlement release has no operator-fee payout endpoint. A 60-ARCA potion has nominal expected payout 52, site fee 6 and expected reserve gain 2. These are nominal outcomes, not guaranteed profit. ARCA has no promised cash value or ETH redemption.
 
 ## Architecture and trust
 
@@ -74,7 +75,7 @@ Schema is in `db/schema.ts`. Generate append-only migrations with `pnpm db:gener
 
 ## Validation and demonstration
 
-47 tests cover retained contracts and wallet diagnostics plus new real ERC-20 deposit/payout transactions, no chain writes during gameplay, partial withdrawals, replay resistance, stolen/altered/expired vouchers, concurrent spending, insufficient reserves, rollback, login ownership, nonce replay and hidden mutations. Local tests do not prove live Sepolia completion.
+50 tests cover retained contracts and wallet diagnostics plus new real ERC-20 deposit/payout transactions, no chain writes during gameplay, partial withdrawals, replay resistance, stolen/altered/expired vouchers, concurrent spending, insufficient reserves, rollback, login ownership, nonce replay and hidden mutations. Local tests do not prove live Sepolia completion.
 
 For a seven-minute assessment: show token/vault addresses → connect and sign in → deposit (transaction 1) → choose a seed and grow with no wallet prompt → sell and show game credit → show both Continue/Withdraw choices → withdraw (transaction 2) → open the successful receipt, ARCA Transfer and wallet balance. Explain the off-chain gameplay / on-chain custody tradeoff.
 
@@ -82,7 +83,7 @@ Submission repository: https://github.com/zliu05072-prog/arcana. Smart contract 
 
 ### Art and the three-stage player journey
 
-The seed cabinet includes a free atlas of all 20 bloom forms (five species × four rarities), four selectable illustrated potion bottles, and a free growth animation preview. These previews do not spend ARCA or add owned flowers.
+The seed cabinet includes a free atlas of all 20 bloom forms (five species × four rarities), three selectable illustrated potion bottles, and a free growth animation preview. These previews do not spend ARCA or add owned flowers.
 
 1. **Top up · ETH → ARCA** converts Sepolia ETH directly into saved game ARCA in one wallet transaction. The input previews the exact ARCA amount; gas is extra.
 2. **Keep & play** retains proceeds in the server-backed game balance. Potions, growth and sales need no blockchain transaction.
@@ -101,3 +102,13 @@ Submission:
 2. Smart Contract Address (ArcanaVault, Sepolia): `0x460cb21739f1cd73cf1de5d8a3337b1f6d86cae3`
 
 The existing ARCA token is `0xc353a90e666E2C70279DC692FeEE7CB15AA8cB83`; the settlement vault is not a replacement ERC20 token.
+
+### Current three-potion economy (version 2)
+
+| Potion | Cost (ARCA) | Common | Alternate color | Rare | Legendary |
+|---|---:|---:|---:|---:|---:|
+| Whisperdew Tonic | 60 | 75% | 20% | 4% | 1% |
+| Moonwell Draught | 120 | 70% | 20% | 9% | 1% |
+| Starfire Elixir | 180 | 67% | 20% | 12% | 1% |
+
+New flower offers are 40 / 60 / 150 / 400 ARCA by rarity, regardless of potion. Higher tiers purchase improved odds, not higher sale prices or guaranteed returns. Each purchase reserves 400 ARCA, rather than the old 400/800/1600/3200 amounts, while keeping all player balances and pending payouts fully backed. The included site fee remains 10%. Existing flowers preserve their original offers and reserves; the previous on-chain garden keeps its original economy. Refresh stale pages before purchasing. The expected sale values for new flowers are 52, 57.5 and 60.8 ARCA, respectively; these are averages, not promised outcomes or operator profit.
