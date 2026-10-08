@@ -33,7 +33,7 @@ const columns=[[24,344],[405,758],[790,1145],[1180,1514],[1550,1970]];
 export function specimen(species,rarity=0,seed=false){
   const [x,end]=seed?columns[0]:columns[rarity+1];
   const y=seed?320:200,h=seed?330:545;
-  return `<svg class="botanical-art ${seed?'seed-art':'bloom-art'}" viewBox="${x} ${y} ${end-x} ${h}" aria-hidden="true" overflow="hidden"><svg x="${x}" y="${y}" width="${end-x}" height="${h}" overflow="hidden"><image x="${-x}" y="${-y}" href="/art/${SEEDS[species].id}-sheet.png" width="1984" height="794" preserveAspectRatio="none"/></svg></svg>`;
+  return `<svg class="botanical-art ${seed?'seed-art':'bloom-art'}" viewBox="${x} ${y} ${end-x} ${h}" aria-hidden="true" overflow="hidden"><svg x="${x}" y="${y}" width="${end-x}" height="${h}" overflow="hidden"><image x="${-x}" y="${-y}" href="${import.meta.env?.BASE_URL||'/'}art/${SEEDS[species].id}-sheet.png" width="1984" height="794" preserveAspectRatio="none"/></svg></svg>`;
 }
 export function growingArt(species,phase,infusion,tier=0){
   return `<div class="growth-art phase-${phase}" style="--magic:${INFUSIONS[infusion].color}"><div class="growth-earth"></div><div class="growth-seed">${specimen(species,0,true)}</div><div class="growth-shoot">${plantSVG(phase===1?1:3,species%3)}</div><div class="pour-vial">${potionSVG(potion(tier,infusion))}</div><span class="magic-drop d1"></span><span class="magic-drop d2"></span><span class="magic-drop d3"></span><span class="growth-spark">✦</span></div>`;
