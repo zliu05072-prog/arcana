@@ -7,7 +7,7 @@ Arcana is an English-language fantasy gardening prototype on Ethereum Sepolia. P
 ## Current deployment status
 
 - Existing ARCA ERC-20 / V6 garden: [`0xc353a90e666E2C70279DC692FeEE7CB15AA8cB83`](https://sepolia.etherscan.io/address/0xc353a90e666E2C70279DC692FeEE7CB15AA8cB83), 18 decimals. This token is preserved.
-- **New `ArcanaVault` settlement contract: awaiting operator deployment and activation.** The live site intentionally disables deposits/game purchases until verification succeeds. Do not present local tests as a completed Sepolia deployment.
+- **New `ArcanaVault` settlement contract: deployed and activated** at [`0x460cb21739f1cd73cf1de5d8a3337b1f6d86cae3`](https://sepolia.etherscan.io/address/0x460cb21739f1cd73cf1de5d8a3337b1f6d86cae3). [Deployment receipt](https://sepolia.etherscan.io/tx/0x8918493443df4517f20c814e53d3b4d3795f168bbccd8f7160d431a8bf59f2c8) succeeded in block 11868216. Exact runtime bytecode, token, authorizer, operator and 500-ARCA initial reserve were independently verified. Actual deployment gas cost 0.00000436684150164 Sepolia ETH; initial reserve funding was 0.005 test ETH. The existing wallet retained its 180 ARCA. Deployment metadata is in `src/vault-deployment.json`. Player deposit and withdrawal receipts are verified separately; deployment is not a completed gameplay demonstration.
 - Existing wallet ARCA is not automatically moved, replaced or reset. Deposit it using one ordinary ERC-20 transfer to the activated vault. No allowance transaction is necessary.
 - Existing V6 flowers remain at `/onchain.html`. That older garden still charges gas for its game writes. Its full documentation is in [docs/ONCHAIN-V6.md](docs/ONCHAIN-V6.md).
 
@@ -46,6 +46,8 @@ All values are ARCA. The server reserves the maximum Legendary reward before acc
 
 ## One-time activation
 
+The public site is already activated. These steps document reproducible setup for a separate deployment; do not redeploy to access existing balances.
+
 1. Configure a new server-only `ARCA_SIGNER_KEY` as a **secret** in Sites. Never use the user's MetaMask key, expose this key to the frontend, commit it, or rotate it after vault deployment without a migration plan. Production has its separate service secret configured.
 2. The existing operator wallet `0x962189cAF0c97bd530611818b96Dc54242428a33` signs in on the website and opens **Operator · activate settlement**.
 3. Review reserve funding (default **0.005 Sepolia ETH = 500 ARCA**) plus the live quoted maximum deployment fee, and confirm the one-time deployment in MetaMask. This setup payment is separate from normal player deposits, does not move existing wallet ARCA, and initially backs the basic potion. It is not a personal game credit.
@@ -72,8 +74,30 @@ Schema is in `db/schema.ts`. Generate append-only migrations with `pnpm db:gener
 
 ## Validation and demonstration
 
-45 tests cover retained contracts and wallet diagnostics plus new real ERC-20 deposit/payout transactions, no chain writes during gameplay, partial withdrawals, replay resistance, stolen/altered/expired vouchers, concurrent spending, insufficient reserves, rollback, login ownership, nonce replay and hidden mutations. Local tests do not prove live Sepolia completion.
+46 tests cover retained contracts and wallet diagnostics plus new real ERC-20 deposit/payout transactions, no chain writes during gameplay, partial withdrawals, replay resistance, stolen/altered/expired vouchers, concurrent spending, insufficient reserves, rollback, login ownership, nonce replay and hidden mutations. Local tests do not prove live Sepolia completion.
 
 For a seven-minute assessment: show token/vault addresses → connect and sign in → deposit (transaction 1) → choose a seed and grow with no wallet prompt → sell and show game credit → show both Continue/Withdraw choices → withdraw (transaction 2) → open the successful receipt, ARCA Transfer and wallet balance. Explain the off-chain gameplay / on-chain custody tradeoff.
 
-Submission repository: https://github.com/zliu05072-prog/arcana. Add the **verified deployed vault address** after activation; do not submit a wallet address in its place.
+Submission repository: https://github.com/zliu05072-prog/arcana. Smart contract address: **`0x460cb21739f1cd73cf1de5d8a3337b1f6d86cae3`** (Sepolia settlement vault). The retained ARCA ERC-20 address is listed above.
+
+### Art and the three-stage player journey
+
+The seed cabinet includes a free atlas of all 20 bloom forms (five species × four rarities), four selectable illustrated potion bottles, and a free growth animation preview. These previews do not spend ARCA or add owned flowers.
+
+1. **Top up · ETH → ARCA** converts Sepolia ETH directly into saved game ARCA in one wallet transaction. The input previews the exact ARCA amount; gas is extra.
+2. **Keep & play** retains proceeds in the server-backed game balance. Potions, growth and sales need no blockchain transaction.
+3. **Withdraw** transfers the same existing ARCA ERC20 to MetaMask. Partial withdrawal leaves the remainder available for continued play. ETH redemption is not offered.
+
+The settlement tests cover ETH deposit, durable credit, growth, sale, partial ARCA payout and continued play, asserting two player transactions and the actual ERC20 balance increase on a local test chain. Live Sepolia withdrawal still requires the player to fund a game account and confirm a payout; it has not been executed using the owner’s retained 180 ARCA.
+
+### GitHub Pages demonstration website
+
+Website: https://zliu05072-prog.github.io/arcana/
+
+GitHub Actions builds the frontend with the `/arcana/` base path. The existing Sites Worker continues to provide durable balances, receipt verification and signed withdrawals; GitHub Pages hosts static files only. The backend permits this exact GitHub Pages origin (no wildcard). Wallet sign-in is bound to the requesting origin, and Pages uses an eight-hour session bearer token in tab-scoped sessionStorage, without third-party cookies or private keys. Reopening a new tab may require a free login signature; balances remain server-side. The original Sites website retains its HttpOnly cookie login.
+
+Submission:
+1. GitHub Repository: https://github.com/zliu05072-prog/arcana
+2. Smart Contract Address (ArcanaVault, Sepolia): `0x460cb21739f1cd73cf1de5d8a3337b1f6d86cae3`
+
+The existing ARCA token is `0xc353a90e666E2C70279DC692FeEE7CB15AA8cB83`; the settlement vault is not a replacement ERC20 token.
